@@ -1,0 +1,28 @@
+max steps: 100
+delta t: 3600      # Seconds
+start t: 2023/01/01 00:00:01
+end t: 2028/12/31 12:59:59
+
+city: ../data/chicago-map.pkl
+demand: ../data/chicago_demand.csv
+
+fleet:
+  size: 50
+  vehicle: BYD E6
+  battery model: multistage
+  depot: none
+
+charging stations:
+  - location: 76
+    max port power: 10
+    max total power: 500
+    efficiency: 0.9
+    ports: 10
+    max total power: 50
+  - location: 55
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 10
+
+    

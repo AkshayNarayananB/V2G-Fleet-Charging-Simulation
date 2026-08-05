@@ -1,0 +1,14 @@
+[tool.tox]
+requires = ["tox>=4"]
+env_list = ["py312"]
+
+[tool.tox.env_run_base]
+description = "Static analysis, unit tests, and packaging"
+deps = ["-r requirements.txt"]
+commands = [
+  ["pytest", "."],
+  ["python", "setup.py", "sdist"],
+]
+
+
+

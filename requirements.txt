@@ -1,0 +1,12 @@
+black
+coloredlogs
+gymnasium
+matplotlib
+numpy
+pandas
+prospector
+pytest
+PyYAML
+scikit-learn
+stable_baselines3
+torch
