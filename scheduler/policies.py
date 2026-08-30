@@ -79,63 +79,69 @@ class DataLogger:
     def __init__(self, logfile):
         self.csvfile = open(logfile, "w")
         
-        # Define core telemetry headers
+        # Shifted to Long-Format headers to match the pandas pipeline
         headers = [
-            "step", "timestamp", "net_building_load", "total_grid_power",
-            "step_completed", "v2b_revenue", "current_price", "taxi_profit"
+            "Time_Step", "Timestamp", "Vehicle_ID", "State", "SoC", "SoH", 
+            "Power_kW", "Building_Load_kW", "Total_Grid_Power", "Grid_Price", 
+            "Completed_Rides_Global", "Skipped_Rides_Global", "Taxi_Profit_Global", "V2B_Revenue_Global"
         ]
-        # Append per-vehicle headers
-        headers.extend([f"soh_{i}" for i in range(50)])
-        headers.extend([f"soc_{i}" for i in range(50)])
-        headers.extend([f"status_{i}" for i in range(50)])
-        
         self.csvfile.write(",".join(headers) + "\n")
         self.retired = [0] * 50
         self.step_count = 0
 
     def write(self, info, timestamp):
-        # Extract environment metrics
+        # Extract global environment metrics
         net_building_load = info.get("net_building_load", 0.0)
         total_grid_power = info.get("total_grid_power", 0.0)
-        step_completed = info.get("step_completed", 0)
+        
+        # Ensure skipped rides is passed from your gym env into the info dict
+        completed_rides = info.get("step_completed", info.get("completed_rides", 0))
+        skipped_rides = info.get("skipped_rides", 0) 
+        
         v2b_revenue = info.get("V2B_Revenue", 0.0)
         current_price = info.get("current_price", 0.0)
 
-        soh_curr = []
-        soc_curr = []
-        state = []
-        
-        for v in range(50):
-            soc_curr.append(info["fleet"][v]["battery"]["soc"])
-            # Mark vehicle as retired if capacity drops below 80%
-            if info["fleet"][v]["battery"]["actual_capacity"] / info["fleet"][v]["battery"]["initial_capacity"] <= 0.8:
-                self.retired[v] = 1
-            soh_curr.append(
-                info["fleet"][v]["battery"]["actual_capacity"] / info["fleet"][v]["battery"]["initial_capacity"]
-            )
-            # Extract enum name (e.g., 'IDLE')
-            state.append(str(info["fleet"][v]["status"]).split('.')[-1])
-
         # Calculate live taxi profit
-        profit = sum([j["fare"] for j in info["inprogress"] if self.retired[j["vehicle"]] < 1])
+        profit = sum([j["fare"] for j in info.get("inprogress", []) if self.retired[j["vehicle"]] < 1])
 
-        # Construct row array
-        row = [
-            str(self.step_count), 
-            str(timestamp), 
-            f"{net_building_load:.2f}", 
-            f"{total_grid_power:.2f}",
-            str(step_completed), 
-            f"{v2b_revenue:.4f}", 
-            f"{current_price:.4f}", 
-            f"{profit:.2f}"
-        ]
-        
-        row.extend([f"{soh:.4f}" for soh in soh_curr])
-        row.extend([f"{soc:.4f}" for soc in soc_curr])
-        row.extend(state)
-        
-        self.csvfile.write(",".join(row) + "\n")
+        # Write a row for EVERY vehicle to enable the state matrix and degradation tracking
+        for v in range(50):
+            battery = info["fleet"][v]["battery"]
+            actual_cap = battery["actual_capacity"]
+            initial_cap = battery["initial_capacity"]
+            
+            # Mark vehicle as retired if capacity drops below 80%
+            if actual_cap / initial_cap <= 0.8:
+                self.retired[v] = 1
+                
+            soc = battery["soc"]
+            soh = actual_cap / initial_cap
+            
+            # Extract the pure string name of the Enum (e.g., 'IDLE', 'DRIVING')
+            state = str(info["fleet"][v]["status"]).split('.')[-1]
+            
+            # Fetch the applied power. Change the key below if your env uses a different name (e.g., 'charge_rate')
+            # Negative values = Discharging (V2G), Positive = Charging
+            power_kw = info["fleet"][v].get("power_kw", 0.0) 
+
+            row = [
+                str(self.step_count),
+                str(timestamp),
+                str(v),
+                state,
+                f"{soc:.4f}",
+                f"{soh:.4f}",
+                f"{power_kw:.4f}",
+                f"{net_building_load:.2f}",
+                f"{total_grid_power:.2f}",
+                f"{current_price:.4f}",
+                str(completed_rides),
+                str(skipped_rides),
+                f"{profit:.2f}",
+                f"{v2b_revenue:.4f}"
+            ]
+            self.csvfile.write(",".join(row) + "\n")
+            
         self.step_count += 1
 
     def close(self):

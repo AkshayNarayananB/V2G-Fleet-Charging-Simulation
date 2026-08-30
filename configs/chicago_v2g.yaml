@@ -7,7 +7,7 @@ city: data/chicago-map.pkl
 demand: data/chicago_demand.csv
 
 enable_v2g: True
-reward_type: "economics" # Toggle between "operations" or "economics"
+reward_type: "operations" # Toggle between "operations" or "economics"
 
 fleet:
   size: 50
