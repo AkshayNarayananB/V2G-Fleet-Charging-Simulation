@@ -5,8 +5,8 @@ import os
 import glob
 
 import coloredlogs
-import numpy
-import pandas
+import numpy as np
+import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ if __name__ == '__main__':
         '--raw-dir',
         '-r',
         required=True,
-        help='Path to the folder containing raw parquet files.'
+        help='Path to the folder containing raw CSV files.'
     )
     parser.add_argument(
         '--verbosity',
@@ -28,18 +28,18 @@ if __name__ == '__main__':
     args = parser.parse_args()
     coloredlogs.install(level=args.verbosity.upper())
 
-    # Dynamically find all parquet files in the specified folder
-    parquet_files = sorted(glob.glob(os.path.join(args.raw_dir, '*.parquet')))
-    if not parquet_files:
-        LOGGER.error(f"No .parquet files found in directory: {args.raw_dir}")
+    # Fetch .csv instead of .parquet
+    csv_files = sorted(glob.glob(os.path.join(args.raw_dir, '*.csv')))
+    if not csv_files:
+        LOGGER.error(f"No .csv files found in directory: {args.raw_dir}")
         exit(1)
 
     data = []
     LOGGER.debug('Loading raw data...')
-    for file in parquet_files:
+    for file in csv_files:
         LOGGER.debug(f'Loading file: {file}...')
-        data.append(pandas.read_parquet(file))
-    data = pandas.concat(data)
+        data.append(pd.read_csv(file, low_memory=False))
+    data = pd.concat(data, ignore_index=True)
 
     LOGGER.debug('Dropping unneeded columns...')
     data.drop(
@@ -49,21 +49,17 @@ if __name__ == '__main__':
             'payment_type', 'company', 'pickup_centroid_longitude',
             'pickup_centroid_latitude', 'pickup_centroid_location',
             'dropoff_centroid_longitude', 'dropoff_centroid_latitude',
-            'dropoff_centroid_location',
+            'dropoff_centroid_location', 'fare', 
             'Trip ID', 'Taxi ID', 'Trip Seconds', 'Pickup Census Tract',
             'Dropoff Census Tract', 'Tips', 'Tolls', 'Extras',
             'Payment Type', 'Company', 'Pickup Centroid LongLongitude',
             'Pickup Centroid Latitude', 'Pickup Centroid Location',
             'Dropoff Centroid Longitude', 'Dropoff Centroid Latitude',
-            'Dropoff Centroid  Location'
+            'Dropoff Centroid  Location', 'Fare'
         ],
         errors='ignore',
         inplace=True
     )
-
-    LOGGER.debug('Dropping NAN and INF values...')
-    data.replace([numpy.inf, -numpy.inf], numpy.nan, inplace=True)
-    data.dropna(inplace=True)
 
     LOGGER.debug('Standardizing column names...')
     data.rename(
@@ -84,9 +80,19 @@ if __name__ == '__main__':
         inplace=True
     )
 
+    LOGGER.debug('Dropping NAN and INF values...')
+    data.replace([np.inf, -np.inf], np.nan, inplace=True)
+    # Drop rows where critical telemetry is missing before casting
+    data.dropna(subset=['pickup_location', 'dropoff_location', 'distance', 'fare'], inplace=True)
+
+    LOGGER.debug('Filtering out invalid community areas...')
+    # CRITICAL FIX: Filter to the strict 77 Chicago community areas
+    data = data[data['pickup_location'].between(1, 77)]
+    data = data[data['dropoff_location'].between(1, 77)]
+
     LOGGER.debug('Casting data to correct types...')
-    data['pickup_time'] = pandas.to_datetime(data['pickup_time'], format='mixed')
-    data['dropoff_time'] = pandas.to_datetime(data['dropoff_time'], format='mixed')
+    data['pickup_time'] = pd.to_datetime(data['pickup_time'], format='mixed')
+    data['dropoff_time'] = pd.to_datetime(data['dropoff_time'], format='mixed')
     data['distance'] = 1.6 * data['distance'].astype(str).str.replace(',', '').astype(float)
     data['pickup_location'] = data['pickup_location'].astype(int)
     data['dropoff_location'] = data['dropoff_location'].astype(int)
@@ -101,6 +107,6 @@ if __name__ == '__main__':
     data.sort_values(by='pickup_time', ascending=True, inplace=True)
 
     LOGGER.debug('Writing to file...')
-    data.to_csv('chicago_demand.csv', index=False)
-
+    # Outputting directly to the data folder
+    data.to_csv('../data/chicago_demand.csv', index=False)
     LOGGER.info('Successfully cleaned Chicago cab data.')

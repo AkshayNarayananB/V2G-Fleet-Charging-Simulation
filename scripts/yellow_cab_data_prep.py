@@ -5,8 +5,8 @@ import os
 import glob
 
 import coloredlogs
-import numpy
-import pandas
+import numpy as np
+import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     coloredlogs.install(level=args.verbosity.upper())
 
-    # Dynamically find all parquet files in the specified folder
     parquet_files = sorted(glob.glob(os.path.join(args.raw_dir, '*.parquet')))
     if not parquet_files:
         LOGGER.error(f"No .parquet files found in directory: {args.raw_dir}")
@@ -46,26 +45,16 @@ if __name__ == '__main__':
     ]
 
     data = []
-    LOGGER.debug('Loading raw data (memory-optimized)...')
+    LOGGER.debug('Loading raw data...')
     for file in parquet_files:
         LOGGER.debug(f'Loading file: {file}...')
-        # Only load the specified columns from the parquet file to save RAM
         try:
-            chunk = pandas.read_parquet(file, columns=needed_columns)
+            chunk = pd.read_parquet(file, columns=needed_columns)
             data.append(chunk)
         except ValueError as e:
             LOGGER.warn(f'Skipping {file} due to missing columns: {e}')
             
-    LOGGER.debug('Concatenating data...')
-    data = pandas.concat(data, ignore_index=True)
-
-    LOGGER.debug('Dropping NAN and INF values...')
-    data.replace([numpy.inf, -numpy.inf], numpy.nan, inplace=True)
-    data.dropna(inplace=True)
-
-    LOGGER.debug('Dropping NAN and INF values...')
-    data.replace([numpy.inf, -numpy.inf], numpy.nan, inplace=True)
-    data.dropna(inplace=True)
+    data = pd.concat(data, ignore_index=True)
 
     LOGGER.debug('Standardizing column names...')
     data.rename(
@@ -81,10 +70,19 @@ if __name__ == '__main__':
         inplace=True
     )
 
+    LOGGER.debug('Dropping NAN and INF values...')
+    data.replace([np.inf, -np.inf], np.nan, inplace=True)
+    data.dropna(subset=['pickup_location', 'dropoff_location', 'distance', 'fare'], inplace=True)
+
+    LOGGER.debug('Filtering out invalid TLC zones...')
+    # NYC TLC Zones strictly range from 1 to 263 (264 and 265 are unknown/external)
+    data = data[data['pickup_location'].between(1, 263)]
+    data = data[data['dropoff_location'].between(1, 263)]
+
     LOGGER.debug('Casting data to correct types...')
-    data['pickup_time'] = pandas.to_datetime(data['pickup_time'], format='mixed')
-    data['dropoff_time'] = pandas.to_datetime(data['dropoff_time'], format='mixed')
-    data['passenger_count'] = data['passenger_count'].astype(int)
+    data['pickup_time'] = pd.to_datetime(data['pickup_time'], format='mixed')
+    data['dropoff_time'] = pd.to_datetime(data['dropoff_time'], format='mixed')
+    data['passenger_count'] = data['passenger_count'].fillna(1).astype(int)
     data['distance'] = 1.6 * data['distance'].astype(float)
     data['pickup_location'] = data['pickup_location'].astype(int)
     data['dropoff_location'] = data['dropoff_location'].astype(int)
@@ -101,5 +99,4 @@ if __name__ == '__main__':
 
     LOGGER.debug('Writing to file...')
     data.to_csv('nyc_demand.csv', index=False)
-
     LOGGER.info('Successfully cleaned NYC yellow cab data.')

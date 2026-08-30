@@ -73,50 +73,73 @@ class DnnPolicy(SchedulePolicy):
             action[:, 1] = action[:, 1] * 50.0 # scale from normalized [-1, 1] to max port power 50kW
             return action
 
-
 class DataLogger:
-    """Get data for plots."""
+    """Get data for plots and analysis."""
 
     def __init__(self, logfile):
         self.csvfile = open(logfile, "w")
-        self.csvfile.write("profit,total_power,completed,")
-        self.csvfile.write(",".join([f"soh{i}" for i in range(50)]))
-        self.csvfile.write(",")
-        self.csvfile.write(",".join([f"status{i}" for i in range(50)]))
-        self.csvfile.write("\n")
-        self.p_old = [72.1] * 50
+        
+        # Define core telemetry headers
+        headers = [
+            "step", "timestamp", "net_building_load", "total_grid_power",
+            "step_completed", "v2b_revenue", "current_price", "taxi_profit"
+        ]
+        # Append per-vehicle headers
+        headers.extend([f"soh_{i}" for i in range(50)])
+        headers.extend([f"soc_{i}" for i in range(50)])
+        headers.extend([f"status_{i}" for i in range(50)])
+        
+        self.csvfile.write(",".join(headers) + "\n")
         self.retired = [0] * 50
+        self.step_count = 0
 
-    def write(self, info):
-        total_power = info.get("total_grid_power", 0.0)
-        p_curr = []
+    def write(self, info, timestamp):
+        # Extract environment metrics
+        net_building_load = info.get("net_building_load", 0.0)
+        total_grid_power = info.get("total_grid_power", 0.0)
+        step_completed = info.get("step_completed", 0)
+        v2b_revenue = info.get("V2B_Revenue", 0.0)
+        current_price = info.get("current_price", 0.0)
+
         soh_curr = []
+        soc_curr = []
         state = []
+        
         for v in range(50):
-            p_curr.append(info["fleet"][v]["battery"]["soc"] * 72.1)
-            if info["fleet"][v]["battery"]["actual_capacity"] / 72.1 <= 0.8:
+            soc_curr.append(info["fleet"][v]["battery"]["soc"])
+            # Mark vehicle as retired if capacity drops below 80%
+            if info["fleet"][v]["battery"]["actual_capacity"] / info["fleet"][v]["battery"]["initial_capacity"] <= 0.8:
                 self.retired[v] = 1
             soh_curr.append(
-                info["fleet"][v]["battery"]["actual_capacity"]
-                / info["fleet"][v]["battery"]["initial_capacity"]
+                info["fleet"][v]["battery"]["actual_capacity"] / info["fleet"][v]["battery"]["initial_capacity"]
             )
-            state.append(1 if info["fleet"][v]["status"] == "RECOVERY" else 0)
-        self.p_old = p_curr
+            # Extract enum name (e.g., 'IDLE')
+            state.append(str(info["fleet"][v]["status"]).split('.')[-1])
 
-        profit = 0
-        for j in info["inprogress"]:
-            if self.retired[j["vehicle"]] < 1:
-                profit += j["fare"]
+        # Calculate live taxi profit
+        profit = sum([j["fare"] for j in info["inprogress"] if self.retired[j["vehicle"]] < 1])
 
-        entry = f"{profit},{total_power},"
-        for i in range(50):
-            entry += f"{soh_curr[i]},"
-        entry += ",".join([f"{state[i]}" for i in range(50)])
-        self.csvfile.write(entry + "\n")
+        # Construct row array
+        row = [
+            str(self.step_count), 
+            str(timestamp), 
+            f"{net_building_load:.2f}", 
+            f"{total_grid_power:.2f}",
+            str(step_completed), 
+            f"{v2b_revenue:.4f}", 
+            f"{current_price:.4f}", 
+            f"{profit:.2f}"
+        ]
+        
+        row.extend([f"{soh:.4f}" for soh in soh_curr])
+        row.extend([f"{soc:.4f}" for soc in soc_curr])
+        row.extend(state)
+        
+        self.csvfile.write(",".join(row) + "\n")
+        self.step_count += 1
 
     def close(self):
         self.csvfile.close()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulate vehicle fleet")
