@@ -26,3 +26,9 @@ charging stations:
     max total power: 500
     efficiency: 0.9
     ports: 10
+
+# Add this block anywhere in your yaml files
+microgrid_cluster:
+  Hospital_kW: 2
+  Office_kW: 2
+  School_kW: 1

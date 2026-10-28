@@ -26,3 +26,8 @@ charging stations:
     ports: 10
 
     
+# Add this block anywhere in your yaml files
+microgrid_cluster:
+  Hospital_kW: 2
+  Office_kW: 2
+  School_kW: 1

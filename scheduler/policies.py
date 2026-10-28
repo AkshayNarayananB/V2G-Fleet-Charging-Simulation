@@ -26,6 +26,15 @@ from simulator.simulator import *
 import stable_baselines3
 import torch
 
+import os
+import sys
+from pathlib import Path
+
+import sys
+from pathlib import Path
+# Add the project root to Python's path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 
 class SchedulePolicy:
     """Abstract Policy Class."""
@@ -50,95 +59,88 @@ class EightyTwentyPolicy(SchedulePolicy):
     def schedule(self, observation: numpy.array, info: Dict) -> numpy.array:
         action = numpy.zeros((50, 2))
         for v in range(len(info["fleet"])):
-            if observation[v, 1] < 0.2:
+            # if observation[v, 1] < 0.2:
+            # Access the SoC directly from the unflattened info dictionary
+            if info["fleet"][v]["battery"]["soc"] < 0.2:
                 action[v, 0] = 1
                 action[v, 1] = 72.1
         return action
 
 
+# class DnnPolicy(SchedulePolicy):
+#     """A DNN takes the SoC and SoH of each each vehicle and returns whether
+#     the vehicle should be chargning and if so how fast.
+#     """
+    
+#     def __init__(self, weights: str) -> None:
+#         super().__init__()
+#         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#         self.dnn = torch.load(weights, weights_only=False).eval().to(self.device)
+
+#     def schedule(self, observation, info):
+#         with torch.no_grad():
+#             x = torch.from_numpy(observation).unsqueeze(0).to(self.device)
+#             action = self.dnn(x)[0].squeeze().cpu().detach().numpy()
+#             action[:, 1] = action[:, 1] * 50.0 # scale from normalized [-1, 1] to max port power 50kW
+#             return action
+        
+from stable_baselines3 import PPO
+
 class DnnPolicy(SchedulePolicy):
-    """A DNN takes the SoC and SoH of each each vehicle and returns whether
-    the vehicle should be chargning and if so how fast.
-    """
+    """Loads a trained SB3 PPO agent and returns determinisitic actions."""
     
     def __init__(self, weights: str) -> None:
         super().__init__()
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.dnn = torch.load(weights, weights_only=False).eval().to(self.device)
+        # Load standard SB3 Zip file, not raw Torch
+        self.model = PPO.load(weights)
 
     def schedule(self, observation, info):
-        with torch.no_grad():
-            x = torch.from_numpy(observation).unsqueeze(0).to(self.device)
-            action = self.dnn(x)[0].squeeze().cpu().detach().numpy()
-            action[:, 1] = action[:, 1] * 50.0 # scale from normalized [-1, 1] to max port power 50kW
-            return action
+        # model.predict automatically handles tensor conversions and returns bounded actions
+        action, _ = self.model.predict(observation, deterministic=True)
+        return action
 
 class DataLogger:
-    """Get data for plots and analysis."""
+    """Exhaustive Data Logger for full visualization freedom."""
 
     def __init__(self, logfile):
         self.csvfile = open(logfile, "w")
         
-        # Shifted to Long-Format headers to match the pandas pipeline
         headers = [
-            "Time_Step", "Timestamp", "Vehicle_ID", "State", "SoC", "SoH", 
-            "Power_kW", "Building_Load_kW", "Total_Grid_Power", "Grid_Price", 
-            "Completed_Rides_Global", "Skipped_Rides_Global", "Taxi_Profit_Global", "V2B_Revenue_Global"
+            "Time_Step", "Timestamp", "Vehicle_ID", "Status", "SoC", "SoH",
+            "Location_Zone", "Destination_Zone", "Distance_Remaining_km", "Time_Remaining_sec",
+            "Net_Building_Load_kW", "Total_Grid_Power_kW", "Grid_Price",
+            "V2B_Revenue_Global", "Completed_Rides_Global", "Skipped_Rides_Global",
+            "Active_Jobs", "Failed_Jobs"
         ]
         self.csvfile.write(",".join(headers) + "\n")
-        self.retired = [0] * 50
         self.step_count = 0
 
     def write(self, info, timestamp):
         # Extract global environment metrics
         net_building_load = info.get("net_building_load", 0.0)
         total_grid_power = info.get("total_grid_power", 0.0)
-        
-        # Ensure skipped rides is passed from your gym env into the info dict
-        completed_rides = info.get("step_completed", info.get("completed_rides", 0))
-        skipped_rides = info.get("skipped_rides", 0) 
-        
-        v2b_revenue = info.get("V2B_Revenue", 0.0)
-        current_price = info.get("current_price", 0.0)
+        grid_price = info.get("current_price", 0.0)
+        v2b_rev = info.get("V2B_Revenue", 0.0)
+        completed = info.get("step_completed", 0)
+        skipped = info.get("rejected", 0) # Mapped from the updated info dict
+        active = len(info.get("inprogress", []))
+        failed = info.get("failed", 0)
 
-        # Calculate live taxi profit
-        profit = sum([j["fare"] for j in info.get("inprogress", []) if self.retired[j["vehicle"]] < 1])
-
-        # Write a row for EVERY vehicle to enable the state matrix and degradation tracking
-        for v in range(50):
-            battery = info["fleet"][v]["battery"]
-            actual_cap = battery["actual_capacity"]
-            initial_cap = battery["initial_capacity"]
-            
-            # Mark vehicle as retired if capacity drops below 80%
-            if actual_cap / initial_cap <= 0.8:
-                self.retired[v] = 1
-                
-            soc = battery["soc"]
-            soh = actual_cap / initial_cap
-            
-            # Extract the pure string name of the Enum (e.g., 'IDLE', 'DRIVING')
-            state = str(info["fleet"][v]["status"]).split('.')[-1]
-            
-            # Fetch the applied power. Change the key below if your env uses a different name (e.g., 'charge_rate')
-            # Negative values = Discharging (V2G), Positive = Charging
-            power_kw = info["fleet"][v].get("power_kw", 0.0) 
+        # Write a row for EVERY vehicle
+        for v_idx, v in enumerate(info.get("fleet", [])):
+            soc = v["battery"]["soc"]
+            soh = v["battery"]["actual_capacity"] / v["battery"]["initial_capacity"]
+            status = str(v["status"]).split(".")[-1]
+            loc = v.get("location", "Unknown")
+            dest = v.get("destination", "Unknown")
+            dist = v.get("distance_remaining", 0.0)
+            t_rem = v.get("time_remaining", 0.0)
 
             row = [
-                str(self.step_count),
-                str(timestamp),
-                str(v),
-                state,
-                f"{soc:.4f}",
-                f"{soh:.4f}",
-                f"{power_kw:.4f}",
-                f"{net_building_load:.2f}",
-                f"{total_grid_power:.2f}",
-                f"{current_price:.4f}",
-                str(completed_rides),
-                str(skipped_rides),
-                f"{profit:.2f}",
-                f"{v2b_revenue:.4f}"
+                str(self.step_count), str(timestamp), str(v_idx), status,
+                f"{soc:.4f}", f"{soh:.4f}", str(loc), str(dest), f"{dist:.2f}", f"{t_rem:.1f}",
+                f"{net_building_load:.2f}", f"{total_grid_power:.2f}", f"{grid_price:.4f}",
+                f"{v2b_rev:.4f}", str(completed), str(skipped), str(active), str(failed)
             ]
             self.csvfile.write(",".join(row) + "\n")
             

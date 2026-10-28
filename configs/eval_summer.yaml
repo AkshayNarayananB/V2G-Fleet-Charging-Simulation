@@ -1,0 +1,80 @@
+max steps: 17856
+delta t: 300
+start t: 2024/07/01 00:00:01
+end t: 2024/08/31 23:59:59
+
+city: data/nyc-map.pkl
+demand: data/nyc_demand.csv
+
+enable_v2g: True
+reward_type: "operations" 
+
+fleet:
+  size: 500
+  vehicle: BYD E6
+  battery model: multistage
+  depot: none
+
+charging stations:
+  - location: 161    # Midtown Center (Manhattan)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 236    # Upper East Side North (Manhattan)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 132    # JFK Airport (Queens)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 138    # LaGuardia Airport (Queens)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 48     # Clinton East (Manhattan - Times Sq)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 68     # East Chelsea (Manhattan)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 79     # East Village (Manhattan)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 181    # Park Slope (Brooklyn)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 61     # Crown Heights North (Brooklyn)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+  - location: 107    # Gramercy (Manhattan)
+    max port power: 50
+    max total power: 500
+    efficiency: 0.9
+    ports: 15
+
+# charging stations:
+#   - location: 208
+#     max port power: 50
+#     max total power: 500
+#     efficiency: 0.9
+#     ports: 10
+#   - location: 1
+#     max port power: 50
+#     max total power: 500
+#     efficiency: 0.9
+#     ports: 10

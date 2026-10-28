@@ -43,8 +43,8 @@ def download_taxi_data(endpoint, start_date, end_date, output_file):
         final_df.to_csv(output_file, index=False)
         print(f"Saved {len(final_df)} rows to {output_file}")
 
-# Download 2020-2023 (Legacy Endpoint)
-download_taxi_data("wrvz-psew", "2020-01-01", "2024-01-01", "chicago_2020_2023.csv")
+# # Download 2020-2023 (Legacy Endpoint)
+# download_taxi_data("wrvz-psew", "2020-01-01", "2024-01-01", "chicago_2020_2023.csv")
 
 # Download 2024-Present (New Endpoint)
 download_taxi_data("ajtu-isnz", "2024-01-01", "2024-12-31", "chicago_2024_present.csv")
