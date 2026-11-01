@@ -150,6 +150,7 @@ class MultiStageBattery(Battery):
         C = self.initial_capacity
         I_ref = 0.5 * C
         I_t = dW / (dt / 3600)
+        I_t = abs(I_t)  # FORCE ABSOLUTE MAGNITUDE FOR WEAR CALCULATION
         T_ref = 25
 
         if I_t <= 1e-5 and I_t >= -1e-5:

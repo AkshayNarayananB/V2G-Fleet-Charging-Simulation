@@ -1,11 +1,126 @@
+# # import argparse
+# # import yaml
+# # import gymnasium as gym
+
+# # from simulator.simulator import TaxiFleetSimulator
+# # from scheduler.policies import EightyTwentyPolicy, DnnPolicy, DataLogger
+# # from stable_baselines3 import PPO 
+# # from stable_baselines3.common.callbacks import CheckpointCallback
+
+# # def main():
+# #     parser = argparse.ArgumentParser(description="Taxi Fleet Scheduler")
+# #     parser.add_argument('-a', '--action', required=True, choices=['TRAIN', 'EVAL', 'train', 'eval'])
+# #     parser.add_argument('-c', '--config', required=True)
+# #     parser.add_argument('-w', '--weights')
+# #     parser.add_argument('--epochs', type=int, default=100000)
+# #     parser.add_argument('-p', '--policy', choices=['EIGHTYTWENTY', 'DNN', 'eightytwenty', 'dnn'])
+# #     parser.add_argument('-o', '--output', default='results.csv')
+
+# #     args = parser.parse_args()
+
+# #     with open(args.config, 'r') as f:
+# #         config = yaml.safe_load(f)
+
+# #     environment = TaxiFleetSimulator(config)
+
+# #     if args.action.upper() == 'TRAIN':
+# #         print(f"Starting PPO training for {args.epochs} timesteps...")
+        
+# #         # Save a checkpoint every 10,000 steps
+# #         checkpoint_callback = CheckpointCallback(
+# #             save_freq=10000, 
+# #             save_path='./checkpoints/',
+# #             name_prefix='ppo_nyc_model'
+# #         )
+        
+# #         model = PPO("MlpPolicy", environment, verbose=1)
+# #         # Pass the callback to the learning loop
+# #         model.learn(total_timesteps=args.epochs, callback=checkpoint_callback)
+        
+# #         if args.weights:
+# #             model.save(args.weights)
+# #             print(f"Training complete. Final weights saved to {args.weights}")
+
+# #     elif args.action.upper() == 'EVAL':
+# #         if not args.output:
+# #             raise ValueError("Evaluation requires an output CSV path (-o).")
+            
+# #         datalogger = DataLogger(args.output)
+        
+# #         if args.policy.upper() == "EIGHTYTWENTY":
+# #             policy = EightyTwentyPolicy()
+# #         elif args.policy.upper() == "DNN":
+# #             if not args.weights:
+# #                 raise ValueError("DNN policy requires a weights file (-w).")
+# #             policy = DnnPolicy(args.weights)
+# #         else:
+# #             raise ValueError("Choose a supported policy! (-p EIGHTYTWENTY or DNN)")
+
+# #         print(f"Evaluating {args.policy.upper()} policy...")
+        
+# #         observation, info = environment.reset()
+# #         done = False
+# #         truncated = False
+
+# #         while not (done or truncated):
+# #             datalogger.write(info, environment.t)
+# #             action = policy.schedule(observation, info)
+# #             observation, reward, done, truncated, info = environment.step(action)
+
+# #         datalogger.write(info, environment.t)
+# #         datalogger.close()
+# #         print(f"Evaluation complete. Results saved to {args.output}")
+
+# # if __name__ == '__main__':
+# #     main()
+
+# # Abive is the earlier stable baseline code
+# # Below is thwe PPO - Langrarian code
+
 # import argparse
 # import yaml
+# import numpy as np
 # import gymnasium as gym
 
 # from simulator.simulator import TaxiFleetSimulator
 # from scheduler.policies import EightyTwentyPolicy, DnnPolicy, DataLogger
 # from stable_baselines3 import PPO 
-# from stable_baselines3.common.callbacks import CheckpointCallback
+# from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+
+# class PPOLagrangianCallback(BaseCallback):
+#     """Dynamically updates the penalty multiplier based on constraint violations."""
+#     def __init__(self, cost_limit=0.0, lr_lambda=0.01, verbose=1):
+#         super().__init__(verbose)
+#         self.cost_limit = cost_limit
+#         self.lr_lambda = lr_lambda
+#         self.episode_costs = []
+#         self.current_cost = 0.0
+
+#     def _on_step(self) -> bool:
+#         # Fetch the peak violation from the environment's info dictionary
+#         violation = self.locals['infos'][0].get('peak_violation', 0.0)
+#         self.current_cost += violation
+        
+#         if self.locals['dones'][0]:
+#             self.episode_costs.append(self.current_cost)
+#             self.current_cost = 0.0
+            
+#         return True
+
+#     def _on_rollout_end(self) -> None:
+#         if len(self.episode_costs) > 0:
+#             mean_cost = np.mean(self.episode_costs)
+#             self.episode_costs = []
+            
+#             # Access the base Gym environment inside the DummyVecEnv wrapper
+#             env = self.training_env.envs[0].unwrapped
+            
+#             # Dual Gradient Ascent: Update the Lagrangian multiplier
+#             new_lambda = env.lagrangian_multiplier + self.lr_lambda * (mean_cost - self.cost_limit)
+#             env.lagrangian_multiplier = max(0.0, new_lambda)
+            
+#             if self.verbose > 0:
+#                 print(f"\n[CMDP] Mean Peak Violation: {mean_cost:.2f} kW | New Penalty Multiplier (Lambda): {env.lagrangian_multiplier:.4f}")
 
 # def main():
 #     parser = argparse.ArgumentParser(description="Taxi Fleet Scheduler")
@@ -24,22 +139,24 @@
 #     environment = TaxiFleetSimulator(config)
 
 #     if args.action.upper() == 'TRAIN':
-#         print(f"Starting PPO training for {args.epochs} timesteps...")
+#         print(f"Starting CMDP PPO-Lagrangian training for {args.epochs} timesteps...")
         
-#         # Save a checkpoint every 10,000 steps
 #         checkpoint_callback = CheckpointCallback(
 #             save_freq=10000, 
 #             save_path='./checkpoints/',
-#             name_prefix='ppo_nyc_model'
+#             name_prefix='ppo_cmdp_model'
 #         )
+#         lagrangian_callback = PPOLagrangianCallback(cost_limit=0.0, lr_lambda=0.01)
         
-#         model = PPO("MlpPolicy", environment, verbose=1)
-#         # Pass the callback to the learning loop
-#         model.learn(total_timesteps=args.epochs, callback=checkpoint_callback)
+#         # model = PPO("MlpPolicy", environment, verbose=1)
+#         model = PPO("MlpPolicy", environment, learning_rate=0.0001, batch_size=256, n_steps=2048, verbose=1)
+#         # Pass BOTH callbacks to the learning loop
+#         # model.learn(total_timesteps=args.epochs, callback=[checkpoint_callback, lagrangian_callback])
+#         model.learn(total_timesteps=args.epochs, callback=[checkpoint_callback])
         
 #         if args.weights:
 #             model.save(args.weights)
-#             print(f"Training complete. Final weights saved to {args.weights}")
+#             print(f"Training complete. Weights saved to {args.weights}")
 
 #     elif args.action.upper() == 'EVAL':
 #         if not args.output:
@@ -49,12 +166,10 @@
         
 #         if args.policy.upper() == "EIGHTYTWENTY":
 #             policy = EightyTwentyPolicy()
+#             use_sb3_direct = False
 #         elif args.policy.upper() == "DNN":
-#             if not args.weights:
-#                 raise ValueError("DNN policy requires a weights file (-w).")
-#             policy = DnnPolicy(args.weights)
-#         else:
-#             raise ValueError("Choose a supported policy! (-p EIGHTYTWENTY or DNN)")
+#             model = PPO.load(args.weights)
+#             use_sb3_direct = True
 
 #         print(f"Evaluating {args.policy.upper()} policy...")
         
@@ -64,7 +179,10 @@
 
 #         while not (done or truncated):
 #             datalogger.write(info, environment.t)
-#             action = policy.schedule(observation, info)
+#             if use_sb3_direct:
+#                 action, _ = model.predict(observation, deterministic=True)
+#             else:
+#                 action = policy.schedule(observation, info)
 #             observation, reward, done, truncated, info = environment.step(action)
 
 #         datalogger.write(info, environment.t)
@@ -74,9 +192,6 @@
 # if __name__ == '__main__':
 #     main()
 
-# Abive is the earlier stable baseline code
-# Below is thwe PPO - Langrarian code
-
 import argparse
 import yaml
 import numpy as np
@@ -84,43 +199,9 @@ import gymnasium as gym
 
 from simulator.simulator import TaxiFleetSimulator
 from scheduler.policies import EightyTwentyPolicy, DnnPolicy, DataLogger
-from stable_baselines3 import PPO 
-from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CheckpointCallback
 
-class PPOLagrangianCallback(BaseCallback):
-    """Dynamically updates the penalty multiplier based on constraint violations."""
-    def __init__(self, cost_limit=0.0, lr_lambda=0.01, verbose=1):
-        super().__init__(verbose)
-        self.cost_limit = cost_limit
-        self.lr_lambda = lr_lambda
-        self.episode_costs = []
-        self.current_cost = 0.0
-
-    def _on_step(self) -> bool:
-        # Fetch the peak violation from the environment's info dictionary
-        violation = self.locals['infos'][0].get('peak_violation', 0.0)
-        self.current_cost += violation
-        
-        if self.locals['dones'][0]:
-            self.episode_costs.append(self.current_cost)
-            self.current_cost = 0.0
-            
-        return True
-
-    def _on_rollout_end(self) -> None:
-        if len(self.episode_costs) > 0:
-            mean_cost = np.mean(self.episode_costs)
-            self.episode_costs = []
-            
-            # Access the base Gym environment inside the DummyVecEnv wrapper
-            env = self.training_env.envs[0].unwrapped
-            
-            # Dual Gradient Ascent: Update the Lagrangian multiplier
-            new_lambda = env.lagrangian_multiplier + self.lr_lambda * (mean_cost - self.cost_limit)
-            env.lagrangian_multiplier = max(0.0, new_lambda)
-            
-            if self.verbose > 0:
-                print(f"\n[CMDP] Mean Peak Violation: {mean_cost:.2f} kW | New Penalty Multiplier (Lambda): {env.lagrangian_multiplier:.4f}")
 
 def main():
     parser = argparse.ArgumentParser(description="Taxi Fleet Scheduler")
@@ -139,53 +220,105 @@ def main():
     environment = TaxiFleetSimulator(config)
 
     if args.action.upper() == 'TRAIN':
-        print(f"Starting CMDP PPO-Lagrangian training for {args.epochs} timesteps...")
-        
+        print(f"Starting Action Projection PPO training for {args.epochs} timesteps...")
+
         checkpoint_callback = CheckpointCallback(
-            save_freq=10000, 
+            save_freq=10000,
             save_path='./checkpoints/',
-            name_prefix='ppo_cmdp_model'
+            name_prefix='ppo_acproj_model',
         )
-        lagrangian_callback = PPOLagrangianCallback(cost_limit=0.0, lr_lambda=0.01)
-        
-        model = PPO("MlpPolicy", environment, verbose=1)
-        # Pass BOTH callbacks to the learning loop
-        model.learn(total_timesteps=args.epochs, callback=[checkpoint_callback, lagrangian_callback])
-        
+
+        model = PPO(
+            "MlpPolicy",
+            environment,
+            learning_rate=3e-4,
+            batch_size=256,
+            n_steps=2048,
+            ent_coef=0.01,
+            verbose=1,
+        )
+        model.learn(total_timesteps=args.epochs, callback=[checkpoint_callback])
+
         if args.weights:
             model.save(args.weights)
             print(f"Training complete. Weights saved to {args.weights}")
 
     elif args.action.upper() == 'EVAL':
+        import pandas as pd
+
         if not args.output:
             raise ValueError("Evaluation requires an output CSV path (-o).")
-            
-        datalogger = DataLogger(args.output)
-        
+        if not args.policy:
+            raise ValueError("Evaluation requires a policy (-p EIGHTYTWENTY or DNN).")
+
         if args.policy.upper() == "EIGHTYTWENTY":
             policy = EightyTwentyPolicy()
             use_sb3_direct = False
         elif args.policy.upper() == "DNN":
+            if not args.weights:
+                raise ValueError("DNN policy requires a weights file (-w).")
             model = PPO.load(args.weights)
             use_sb3_direct = True
+        else:
+            raise ValueError("Choose a supported policy! (-p EIGHTYTWENTY or DNN)")
 
         print(f"Evaluating {args.policy.upper()} policy...")
         
         observation, info = environment.reset()
         done = False
         truncated = False
+        
+        eval_history = []
+        step_counter = 0
 
         while not (done or truncated):
-            datalogger.write(info, environment.t)
             if use_sb3_direct:
                 action, _ = model.predict(observation, deterministic=True)
             else:
                 action = policy.schedule(observation, info)
+                
             observation, reward, done, truncated, info = environment.step(action)
+            
+            # --- 1. EXTRACT GLOBAL METRICS ---
+            global_metrics = {
+                'Time_Step': environment.t,
+                'Completed_Rides_Global': info.get('step_completed', 0),
+                'Skipped_Rides_Global': info.get('skipped_rides', 0),
+                'V2B_Revenue_Global': info.get('V2B_Revenue', 0.0),
+                'Net_Building_Load_kW': info.get('net_building_load', 0.0),
+                'Total_Grid_Power_kW': info.get('total_grid_power', 0.0),
+                'Peak_Violation_kW': info.get('peak_violation', 0.0)
+            }
+            
+            # --- 2. EXTRACT EXACT LIVE VEHICLE DATA DIRECTLY FROM MEMORY ---
+            # This ignores info['fleet'] entirely and reads the raw objects, guaranteeing viz.py gets what it needs.
+            for i, v in enumerate(environment.fleet):
+                row = global_metrics.copy()
+                
+                initial_cap = getattr(v.battery, 'initial_capacity', 1.0)
+                actual_cap = getattr(v.battery, 'actual_capacity', initial_cap)
+                soh = actual_cap / initial_cap if initial_cap > 0 else 1.0
+                
+                row.update({
+                    'Vehicle_ID': getattr(v, 'vid', i),
+                    'Status': str(v.status).split('.')[-1], # Strips Enum wrappers like "VehicleStatus.IDLE" -> "IDLE"
+                    'SoC': getattr(v.battery, 'soc', 0.0),
+                    'SoH': soh,
+                    'Location_Zone': getattr(getattr(v, 'location', None), 'zone', -1)
+                })
+                eval_history.append(row)
+            
+            step_counter += 1
+            if step_counter % 288 == 0:
+                print(f"[EVAL] Processed {step_counter} steps (Sim Time: {environment.t}) | Net Load: {info.get('net_building_load', 0.0):.1f} kW")
 
-        datalogger.write(info, environment.t)
-        datalogger.close()
-        print(f"Evaluation complete. Results saved to {args.output}")
+        if len(eval_history) > 0:
+            df = pd.DataFrame(eval_history)
+            df.to_csv(args.output, index=False)
+            print(f"Evaluation fully complete! {step_counter} steps processed. 100% compatible results saved to {args.output}")
+        else:
+            print(f"WARNING: The evaluation loop ran 0 steps! Check 'start t' and 'end t'.")
 
+            
 if __name__ == '__main__':
     main()
